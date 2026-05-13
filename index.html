@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#4ec7f5">
+  <title>KET守护小队</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="loadingScreen" class="loading-screen">
+    <div class="loading-card">
+      <div class="loading-badge">KET守护小队</div>
+      <h1>页面加载中，请稍等</h1>
+      <p>正在准备单词卡、答题本、塔防地图和装备图鉴。</p>
+    </div>
+  </div>
+
+  <div class="sky-decor sky-decor-left"></div>
+  <div class="sky-decor sky-decor-right"></div>
+  <div class="ground-strip"></div>
+
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <div class="brand-mark">KET</div>
+        <div>
+          <p class="eyebrow">二年级 KET 备考乐园</p>
+          <h1>KET守护小队</h1>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <article class="stat-chip coin-chip">
+          <span class="stat-label">金币</span>
+          <strong id="goldStat">0</strong>
+        </article>
+        <article class="stat-chip">
+          <span class="stat-label">装备</span>
+          <strong id="equipmentStat">0/45</strong>
+        </article>
+        <article class="stat-chip">
+          <span class="stat-label">单词</span>
+          <strong id="wordStat">0/0</strong>
+        </article>
+        <article class="stat-chip">
+          <span class="stat-label">题目</span>
+          <strong id="questionStat">0/0</strong>
+        </article>
+      </div>
+    </header>
+
+    <main class="main-shell">
+      <section id="homeScreen" class="screen is-active">
+        <div id="homeView"></div>
+      </section>
+
+      <section id="studyScreen" class="screen">
+        <div id="studyView"></div>
+      </section>
+
+      <section id="questionScreen" class="screen">
+        <div id="questionView"></div>
+      </section>
+
+      <section id="gameScreen" class="screen">
+        <div class="section-shell">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">塔防闯关</p>
+              <h2>守住彩虹基地</h2>
+            </div>
+            <button class="action-btn ghost-btn" data-nav="home">返回首页</button>
+          </div>
+
+          <div id="gameHud" class="hud-grid"></div>
+
+          <div class="game-grid">
+            <div class="canvas-frame">
+              <canvas id="gameCanvas" width="900" height="460" aria-label="塔防游戏画布"></canvas>
+            </div>
+            <aside id="gameSidePanel" class="side-panel"></aside>
+          </div>
+        </div>
+      </section>
+
+      <section id="collectionScreen" class="screen">
+        <div id="collectionView"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <div id="modalBackdrop" class="modal-backdrop hidden" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-top">
+        <p id="modalTag" class="eyebrow">提示</p>
+        <h3 id="modalTitle">提示</h3>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+      <div id="modalActions" class="modal-actions"></div>
+    </div>
+  </div>
+
+  <script src="official-word-bank.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
