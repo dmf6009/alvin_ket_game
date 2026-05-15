@@ -4,9 +4,45 @@ const STORAGE_KEY = "ket-guardians-v1";
 const WORD_MASTER_REWARD = 10;
 const WORD_QUIZ_REWARD = 5;
 const GAME_ENTRY_COST = 15;
+const GAME_COMPLETION_BONUS = 12;
 const TOTAL_EQUIPMENT = 60;
 const OFFICIAL_SOURCE_LABEL = "Cambridge A2 Key Vocabulary List · August 2025";
 const OFFICIAL_WORD_DATA = window.__OFFICIAL_WORD_DATA__ || [];
+const GAME_ITEMS = [
+  {
+    id: "repair-kit",
+    name: "应急扳手",
+    cost: 18,
+    short: "回复 2 点耐久",
+    description: "基地快被攻破时立刻补上 2 点耐久，适合救场。",
+    useHint: "基地回复 2 点耐久"
+  },
+  {
+    id: "frost-trap",
+    name: "减速泡泡",
+    cost: 22,
+    short: "减速 8 秒",
+    description: "让全场怪物减速 45%，拖住高压波次。",
+    useHint: "全场怪物减速 8 秒"
+  },
+  {
+    id: "storm-battery",
+    name: "疾速电池",
+    cost: 26,
+    short: "攻速提升 12 秒",
+    description: "让全部炮塔在 12 秒内更快开火，适合清怪潮。",
+    useHint: "全塔攻速提升 12 秒"
+  },
+  {
+    id: "pad-permit",
+    name: "增援炮位卡",
+    cost: 30,
+    short: "解锁 1 个炮位",
+    description: "解锁一个锁定炮位。现在的高难度设计下，它几乎是通关关键。",
+    useHint: "额外解锁 1 个炮位"
+  }
+];
+const GAME_ITEM_MAP = new Map(GAME_ITEMS.map((item) => [item.id, item]));
 
 const WORD_CATEGORIES = [
   {
@@ -509,17 +545,12 @@ function bindGlobalEvents() {
     }
   });
 
-  dom.gameCanvas.addEventListener("click", (event) => {
-    if (!game.active) {
-      return;
+  dom.gameCanvas.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "touch") {
+      event.preventDefault();
     }
-    const rect = dom.gameCanvas.getBoundingClientRect();
-    const scaleX = dom.gameCanvas.width / rect.width;
-    const scaleY = dom.gameCanvas.height / rect.height;
-    const x = (event.clientX - rect.left) * scaleX;
-    const y = (event.clientY - rect.top) * scaleY;
-    placeTower(x, y);
-  });
+    handleGameCanvasPointer(event);
+  }, { passive: false });
 
   window.addEventListener("beforeunload", () => {
     saveState();
@@ -590,6 +621,18 @@ function handleClick(event) {
     handleGameAction(target.dataset.gameAction);
   }
 
+  if (target.dataset.gameSlot) {
+    handleGameSlotAction(Number(target.dataset.gameSlot));
+  }
+
+  if (target.dataset.shopItem) {
+    buyGameItem(target.dataset.shopItem);
+  }
+
+  if (target.dataset.useItem) {
+    useGameItem(target.dataset.useItem);
+  }
+
   if (target.dataset.rewardCard) {
     claimRewardCard(Number(target.dataset.rewardCard));
   }
@@ -601,6 +644,19 @@ function handleClick(event) {
   if (target.dataset.resetModule) {
     openResetModal(target.dataset.resetModule);
   }
+}
+
+function handleGameCanvasPointer(event) {
+  const rect = dom.gameCanvas.getBoundingClientRect();
+  const scaleX = dom.gameCanvas.width / rect.width;
+  const scaleY = dom.gameCanvas.height / rect.height;
+  const x = (event.clientX - rect.left) * scaleX;
+  const y = (event.clientY - rect.top) * scaleY;
+  const slot = getNearestGameSlot(x, y);
+  if (!slot) {
+    return;
+  }
+  handleGameSlotAction(slot.index);
 }
 
 function render() {
@@ -636,7 +692,7 @@ function renderHomeView() {
         <div class="hero-copy">
           <p class="eyebrow">学习赚金币 · 闯关掉装备</p>
           <h2>先学单词，再守基地，<br>把 KET 练成每日小胜利。</h2>
-          <p class="body-copy">每次背会单词、完成题目都会自动存档。金币够了就去玩一局塔防，闯关成功还能解锁真实军备图鉴里的坦克、枪械和飞机。</p>
+          <p class="body-copy">每次背会单词、完成题目都会自动存档。金币不仅能买门票，还能购买局内战术道具。先赚金币，再买道具守住基地，闯关成功还能继续解锁真实军备图鉴。</p>
 
           <div class="menu-grid">
             <button class="menu-btn" data-home-action="study">
@@ -652,7 +708,7 @@ function renderHomeView() {
             <button class="menu-btn" data-home-action="game">
               <div class="menu-icon icon-game">G</div>
               <strong>塔防闯关游戏</strong>
-              <span>每局消耗 15 金币，点击草地就能摆放炮塔。</span>
+              <span>每局消耗 15 金币，点击固定炮位建造或升级，触屏设备也能顺手操作。</span>
             </button>
             <button class="menu-btn" data-home-action="collection">
               <div class="menu-icon icon-collection">B</div>
@@ -666,7 +722,7 @@ function renderHomeView() {
           <article class="sticker-card sticker-blue">
             <div class="sticker-icon">💰</div>
             <strong>金币储备</strong>
-            <span>当前有 ${state.gold} 枚金币，够不够再玩一局？</span>
+            <span>当前有 ${state.gold} 枚金币，既能买门票，也能补充战术道具。</span>
           </article>
           <article class="sticker-card sticker-pink">
             <div class="sticker-icon">📚</div>
@@ -720,7 +776,8 @@ function renderHomeView() {
           <div class="progress-track"><div class="progress-fill pink-fill" style="width:${getPercent(state.unlockedEquipment.length, TOTAL_EQUIPMENT)}%"></div></div>
           <ul class="tip-list">
             <li>词库来源：${OFFICIAL_SOURCE_LABEL}。</li>
-            <li>游戏失败不会额外扣金币。</li>
+            <li>游戏失败不会额外扣金币，但买过的道具会正常消耗。</li>
+            <li>高难度波次建议至少准备 1 到 2 个道具再开局。</li>
             <li>闯关成功后翻 1 张卡牌抽奖励。</li>
             <li>收集满一整套会自动弹出提醒。</li>
           </ul>
@@ -728,6 +785,14 @@ function renderHomeView() {
             <button class="option-btn" data-reset-module="words">重置单词进度</button>
             <button class="option-btn" data-reset-module="questions">重置答题进度</button>
             <button class="option-btn" data-reset-module="collection">重置图鉴进度</button>
+          </div>
+        </article>
+        <article class="section-card">
+          <p class="eyebrow">战术道具商店</p>
+          <h3>买道具再开局</h3>
+          <p class="stat-line">当前背包有 ${getTotalItemCount()} 件道具。入口已经放到这里，点一下就能去购买“增援炮位卡”“减速泡泡”等高难度关键道具。</p>
+          <div class="option-stack" style="margin-top:16px;">
+            <button class="action-btn secondary-btn" data-home-action="game">去购买道具</button>
           </div>
         </article>
       </div>
@@ -1044,6 +1109,7 @@ function renderQuestionCard() {
 }
 
 function renderGameView() {
+  renderStats();
   dom.gameHud.innerHTML = `
     <article class="hud-card">
       <span class="stat-label">门票金币</span>
@@ -1054,21 +1120,39 @@ function renderGameView() {
       <strong>${game.baseHp}/${game.maxBaseHp}</strong>
     </article>
     <article class="hud-card">
-      <span class="stat-label">已放炮塔</span>
-      <strong>${game.towers.length}/${game.maxTowers}</strong>
+      <span class="stat-label">已建炮位</span>
+      <strong>${game.towers.length}/${getUnlockedPadCount()}</strong>
     </article>
     <article class="hud-card">
       <span class="stat-label">波次进度</span>
       <strong>${game.defeatedEnemies}/${game.totalEnemies}</strong>
     </article>
+    <article class="hud-card prep-hud-card">
+      <div class="prep-hud-copy">
+        <span class="stat-label">战术商店入口</span>
+        <strong>这里就能直接买道具</strong>
+        <span class="tiny-note">先买道具，再开始高难度闯关。背包 ${getTotalItemCount()} 件。</span>
+      </div>
+      <div class="prep-hud-actions">
+        ${GAME_ITEMS.map((item) => {
+          const buyDisabled = state.gold >= item.cost ? "" : "disabled";
+          const useDisabled = canUseGameItem(item.id) ? "" : "disabled";
+          return `
+            <div class="prep-buy-card">
+              <strong>${item.name}</strong>
+              <span>${item.cost} 金币 · 背包 ${getItemInventoryCount(item.id)}</span>
+              <div class="prep-buy-actions">
+                <button class="action-btn ghost-btn shop-btn" data-shop-item="${item.id}" ${buyDisabled}>购买</button>
+                <button class="action-btn secondary-btn shop-btn" data-use-item="${item.id}" ${useDisabled}>使用</button>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </article>
   `;
 
   dom.gameSidePanel.innerHTML = `
-    <div class="mini-panel">
-      <p class="eyebrow">玩法说明</p>
-      <h3>点草地，放炮塔</h3>
-      <p class="section-copy">开局点击“开始游戏”会先扣 15 金币。游戏开始后点击绿色区域摆放炮塔，炮塔会自动攻击路径上的怪物。</p>
-    </div>
     <div class="mini-panel">
       <p class="eyebrow">局内状态</p>
       <h3>${game.active ? "正在闯关" : "等待开局"}</h3>
@@ -1077,14 +1161,67 @@ function renderGameView() {
         <button class="action-btn secondary-btn" data-game-action="restart" ${game.active || game.lastResult === "idle" ? "disabled" : ""}>再玩一局</button>
         <button class="action-btn ghost-btn" data-nav="home">返回首页</button>
       </div>
-      <p class="tiny-note" style="margin-top:12px;">${state.gold < GAME_ENTRY_COST && !game.active ? "金币不够啦，先去背单词或答题赚金币吧。" : "击败怪物会额外掉落 1 到 5 金币。"}</p>
+      <p class="tiny-note" style="margin-top:12px;">${getGameStatusNotice()}</p>
+      <div class="status-pill-row">
+        <span class="status-pill">背包 ${getTotalItemCount()} 件</span>
+        ${getGameEffectSummary().map((text) => `<span class="status-pill">${text}</span>`).join("") || '<span class="status-pill">当前无临时增益</span>'}
+      </div>
+    </div>
+    <div class="mini-panel">
+      <p class="eyebrow">触屏玩法</p>
+      <h3>点炮位，不点草地</h3>
+      <p class="section-copy">现在改成固定炮位。你可以直接点下方按钮，也可以点画布里的圆形炮位：空位会建塔，已有炮塔会升级，锁定位需要先用“增援炮位卡”解锁。</p>
+    </div>
+    <div class="mini-panel">
+      <p class="eyebrow">炮位控制</p>
+      <div class="game-slot-grid">
+        ${game.pads.map((pad, index) => `
+          <button class="game-slot-card ${pad.unlocked ? "" : "is-locked"} ${pad.tower ? "has-tower" : ""}" data-game-slot="${index}">
+            <div class="game-slot-top">
+              <strong>${pad.label} 号炮位</strong>
+              <span>${getGameSlotBadge(pad)}</span>
+            </div>
+            <p>${getGameSlotDescription(pad)}</p>
+            <span class="game-slot-action">${getGameSlotActionLabel(pad)}</span>
+          </button>
+        `).join("")}
+      </div>
+    </div>
+    <div class="mini-panel">
+      <p class="eyebrow">道具商店</p>
+      <h3>先买道具，再拼高难度</h3>
+      <div class="game-shop-grid">
+        ${GAME_ITEMS.map((item) => {
+          const count = getItemInventoryCount(item.id);
+          const useDisabled = canUseGameItem(item.id) ? "" : "disabled";
+          const buyDisabled = state.gold >= item.cost ? "" : "disabled";
+          return `
+            <article class="shop-card">
+              <div class="shop-card-top">
+                <strong>${item.name}</strong>
+                <span class="shop-price">${item.cost} 金币</span>
+              </div>
+              <p>${item.description}</p>
+              <div class="shop-meta-row">
+                <span class="shop-meta">${item.short}</span>
+                <span class="shop-meta">背包 ${count}</span>
+              </div>
+              <div class="shop-action-row">
+                <button class="action-btn ghost-btn shop-btn" data-shop-item="${item.id}" ${buyDisabled}>购买</button>
+                <button class="action-btn secondary-btn shop-btn" data-use-item="${item.id}" ${useDisabled}>使用</button>
+              </div>
+            </article>
+          `;
+        }).join("")}
+      </div>
     </div>
     <div class="mini-panel">
       <p class="eyebrow">战斗日志</p>
-      <div class="log-box">${game.log.slice(-8).map((line) => `<p>${line}</p>`).join("") || "<p>还没有战斗记录。</p>"}</div>
+      <div class="log-box">${game.log.slice(0, 8).map((line) => `<p>${line}</p>`).join("") || "<p>还没有战斗记录。</p>"}</div>
     </div>
   `;
 
+  game.uiDirty = false;
   drawGame();
 }
 
@@ -1643,6 +1780,67 @@ function handleGameAction(action) {
   }
 }
 
+function handleGameSlotAction(index) {
+  const pad = game.pads[index];
+  if (!pad) {
+    return;
+  }
+  if (!game.active) {
+    if (!pad.unlocked && state.gameInventory["pad-permit"] > 0) {
+      showToast("先开始游戏，再在局内使用增援炮位卡。");
+    } else {
+      showToast("先开始游戏，再操作炮位。");
+    }
+    return;
+  }
+  if (!pad.unlocked) {
+    showToast("这个炮位还锁着，先使用一张增援炮位卡。");
+    return;
+  }
+  if (!pad.tower) {
+    buildTowerOnPad(pad);
+    return;
+  }
+  upgradeTowerOnPad(pad);
+}
+
+function buyGameItem(itemId) {
+  const item = GAME_ITEM_MAP.get(itemId);
+  if (!item) {
+    return;
+  }
+  if (state.gold < item.cost) {
+    showToast(`金币不够，${item.name} 需要 ${item.cost} 金币。`);
+    return;
+  }
+  addGold(-item.cost, `购买道具 ${item.name}`);
+  state.gameInventory[itemId] = (state.gameInventory[itemId] || 0) + 1;
+  saveState();
+  renderGameView();
+  showToast(`已购买 ${item.name}，可以在游戏里使用。`);
+}
+
+function useGameItem(itemId) {
+  if (!canUseGameItem(itemId)) {
+    if (!game.active) {
+      showToast("先开始游戏，再使用道具。");
+    } else {
+      showToast("背包里没有这个道具，或者当前不能使用。");
+    }
+    return;
+  }
+  const item = GAME_ITEM_MAP.get(itemId);
+  if (!item) {
+    return;
+  }
+  consumeInventoryItem(itemId);
+  applyGameItemEffect(itemId);
+  game.log.unshift(`使用道具：${item.name}。`);
+  saveState();
+  renderGameView();
+  showToast(`${item.name} 已生效。`);
+}
+
 function startGame() {
   if (game.active) {
     return;
@@ -1656,7 +1854,7 @@ function startGame() {
   resetGameState();
   game.active = true;
   game.lastResult = "playing";
-  game.log.unshift("本局开始，扣除 15 金币。");
+  game.log.unshift("本局开始，扣除 15 金币。当前为高难度波次，建议合理使用道具。");
   saveState();
   renderGameView();
   gameLoop();
@@ -1681,34 +1879,11 @@ function resetGameState() {
   game.pendingReward = false;
   game.rewardChoices = [];
   game.rewardResolved = false;
-  game.log = ["点击绿色草地区域可以放置炮塔。"];
-}
-
-function placeTower(x, y) {
-  if (!game.active) {
-    return;
-  }
-  if (game.towers.length >= game.maxTowers) {
-    showToast("本局炮塔已经放满啦。");
-    return;
-  }
-  if (isPointOnPath(x, y)) {
-    showToast("炮塔要放在草地上，不能挡住怪物的路。");
-    return;
-  }
-  const tooClose = game.towers.some((tower) => distance(tower.x, tower.y, x, y) < 62);
-  if (tooClose) {
-    showToast("这里离别的炮塔太近了，换个位置试试。");
-    return;
-  }
-  game.towers.push({
-    x,
-    y,
-    range: 140,
-    cooldown: 0,
-    fireRate: 0.72
-  });
-  game.log.unshift(`放置第 ${game.towers.length} 个炮塔。`);
+  game.slowFieldTimer = 0;
+  game.fireBoostTimer = 0;
+  game.uiDirty = true;
+  game.pads = createGamePads();
+  game.log = ["点击炮位按钮建塔或升级。高难度下建议先准备道具。"];
   renderGameView();
 }
 
@@ -1725,7 +1900,11 @@ function gameLoop(timestamp = 0) {
 
   updateGame(delta);
   drawGame();
-  renderGameView();
+  game.uiTimer += delta;
+  if (game.uiDirty || game.uiTimer >= 0.18) {
+    game.uiTimer = 0;
+    renderGameView();
+  }
 
   if (game.active) {
     game.frameId = window.requestAnimationFrame(gameLoop);
@@ -1733,10 +1912,13 @@ function gameLoop(timestamp = 0) {
 }
 
 function updateGame(delta) {
+  game.slowFieldTimer = Math.max(0, game.slowFieldTimer - delta);
+  game.fireBoostTimer = Math.max(0, game.fireBoostTimer - delta);
   game.spawnTimer += delta;
   if (game.spawnedEnemies < game.totalEnemies && game.spawnTimer >= game.spawnInterval) {
     game.spawnTimer = 0;
     spawnEnemy();
+    game.uiDirty = true;
   }
 
   game.enemies.forEach((enemy) => moveEnemy(enemy, delta));
@@ -1750,7 +1932,7 @@ function updateGame(delta) {
     }
     const target = findEnemyInRange(tower);
     if (target) {
-      tower.cooldown = tower.fireRate;
+      tower.cooldown = getTowerFireRate(tower);
       game.bullets.push(createBullet(tower, target));
     }
   });
@@ -1770,10 +1952,10 @@ function updateGame(delta) {
       target.hp -= bullet.damage;
       bullet.dead = true;
       if (target.hp <= 0) {
-        const reward = randomInt(1, 5);
-        addGold(reward, "击败怪物");
+        addGold(target.reward, "击败怪物");
         game.defeatedEnemies += 1;
-        game.log.unshift(`击败怪物，获得 ${reward} 金币。`);
+        game.log.unshift(`击败怪物，获得 ${target.reward} 金币。`);
+        game.uiDirty = true;
       }
     }
   });
@@ -1782,6 +1964,7 @@ function updateGame(delta) {
   if (escaped.length) {
     game.baseHp = Math.max(0, game.baseHp - escaped.length);
     escaped.forEach(() => game.log.unshift("有怪物冲到基地了。"));
+    game.uiDirty = true;
   }
 
   if (game.baseHp <= 0) {
@@ -1812,6 +1995,8 @@ function finishGame(isWin) {
     return;
   }
 
+  addGold(GAME_COMPLETION_BONUS, "塔防通关奖励");
+  game.log.unshift(`闯关完成，额外获得 ${GAME_COMPLETION_BONUS} 金币。`);
   game.log.unshift("闯关成功，准备翻牌抽奖。");
   prepareRewardChoices();
   openRewardModal();
@@ -1918,17 +2103,21 @@ function createGameController(canvas) {
     ctx: canvas.getContext("2d"),
     active: false,
     lastResult: "idle",
-    maxBaseHp: 5,
-    baseHp: 5,
-    maxTowers: 6,
+    maxBaseHp: 3,
+    baseHp: 3,
     towers: [],
+    pads: createGamePads(),
     enemies: [],
     bullets: [],
-    totalEnemies: 12,
+    totalEnemies: 18,
     spawnedEnemies: 0,
     defeatedEnemies: 0,
-    spawnInterval: 1.25,
+    spawnInterval: 0.95,
     spawnTimer: 0,
+    slowFieldTimer: 0,
+    fireBoostTimer: 0,
+    uiDirty: false,
+    uiTimer: 0,
     lastTimestamp: 0,
     frameId: 0,
     pendingReward: false,
@@ -1950,14 +2139,20 @@ function createGameController(canvas) {
 function spawnEnemy() {
   game.spawnedEnemies += 1;
   const start = game.path[0];
-  const maxHp = 30 + game.spawnedEnemies * 3;
+  const isHeavy = game.spawnedEnemies % 5 === 0;
+  const maxHp = 42 + game.spawnedEnemies * 6 + (isHeavy ? 38 : 0);
+  const speed = 58 + game.spawnedEnemies * 1.4 + (isHeavy ? 6 : 0);
+  const reward = isHeavy ? 6 : randomInt(2, 4);
   game.enemies.push({
     id: `enemy-${Date.now()}-${game.spawnedEnemies}`,
     x: start.x,
     y: start.y,
     hp: maxHp,
     maxHp,
-    speed: 46 + game.spawnedEnemies,
+    speed,
+    reward,
+    radius: isHeavy ? 22 : 18,
+    color: isHeavy ? "#8d63ff" : "#ff7b7b",
     segment: 0,
     progress: 0,
     finished: false
@@ -1972,7 +2167,8 @@ function moveEnemy(enemy, delta) {
     return;
   }
   const segLen = distance(from.x, from.y, to.x, to.y);
-  enemy.progress += (enemy.speed * delta) / segLen;
+  const slowMultiplier = game.slowFieldTimer > 0 ? 0.55 : 1;
+  enemy.progress += ((enemy.speed * slowMultiplier) * delta) / segLen;
   if (enemy.progress >= 1) {
     enemy.segment += 1;
     enemy.progress = 0;
@@ -1993,25 +2189,13 @@ function createBullet(tower, target) {
     y: tower.y,
     targetId: target.id,
     speed: 260,
-    damage: 12,
+    damage: tower.damage,
     dead: false
   };
 }
 
 function findEnemyInRange(tower) {
   return game.enemies.find((enemy) => distance(tower.x, tower.y, enemy.x, enemy.y) <= tower.range);
-}
-
-function isPointOnPath(x, y) {
-  return getDistanceToPath(x, y) < 46 || x > 790;
-}
-
-function getDistanceToPath(x, y) {
-  let shortest = Infinity;
-  for (let index = 0; index < game.path.length - 1; index += 1) {
-    shortest = Math.min(shortest, pointToSegmentDistance(x, y, game.path[index], game.path[index + 1]));
-  }
-  return shortest;
 }
 
 function drawGame() {
@@ -2056,19 +2240,43 @@ function drawGame() {
     ctx.fillRect(798 + hp * 12, 150, 8, 16);
   }
 
-  game.towers.forEach((tower) => {
-    ctx.fillStyle = "#5b78ff";
+  game.pads.forEach((pad) => {
+    ctx.lineWidth = 4;
+    if (!pad.unlocked) {
+      ctx.setLineDash([10, 10]);
+      ctx.strokeStyle = "rgba(31, 45, 61, 0.35)";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.28)";
+    } else if (pad.tower) {
+      ctx.setLineDash([]);
+      ctx.strokeStyle = "#2446aa";
+      ctx.fillStyle = "#5b78ff";
+    } else {
+      ctx.setLineDash([]);
+      ctx.strokeStyle = "#2d8b4d";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.68)";
+    }
     ctx.beginPath();
-    ctx.arc(tower.x, tower.y, 24, 0, Math.PI * 2);
+    ctx.arc(pad.x, pad.y, 28, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#fff4ae";
-    ctx.fillRect(tower.x - 6, tower.y - 30, 12, 20);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = pad.unlocked ? (pad.tower ? "#fff4ae" : "#2d8b4d") : "rgba(31, 45, 61, 0.55)";
+    ctx.font = '800 16px "Trebuchet MS", "PingFang SC", sans-serif';
+    ctx.textAlign = "center";
+    ctx.fillText(pad.unlocked ? (pad.tower ? `Lv${pad.tower.level}` : pad.label) : "锁", pad.x, pad.y + 6);
+  });
+
+  game.towers.forEach((tower) => {
+    ctx.fillStyle = tower.level === 3 ? "#ffcf4f" : tower.level === 2 ? "#83d9ff" : "#fff4ae";
+    ctx.fillRect(tower.x - 7, tower.y - 34, 14, 24);
+    ctx.fillStyle = "#2940a8";
+    ctx.fillRect(tower.x - 3, tower.y - 46, 6, 14);
   });
 
   game.enemies.forEach((enemy) => {
-    ctx.fillStyle = "#ff7b7b";
+    ctx.fillStyle = enemy.color;
     ctx.beginPath();
-    ctx.arc(enemy.x, enemy.y, 18, 0, Math.PI * 2);
+    ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(enemy.x - 14, enemy.y - 30, 28, 6);
@@ -2083,6 +2291,15 @@ function drawGame() {
     ctx.fill();
   });
 
+  if (game.slowFieldTimer > 0) {
+    ctx.fillStyle = "rgba(89, 193, 255, 0.16)";
+    ctx.fillRect(0, 0, game.canvas.width, game.canvas.height);
+  }
+  if (game.fireBoostTimer > 0) {
+    ctx.fillStyle = "rgba(255, 206, 88, 0.14)";
+    ctx.fillRect(0, 0, game.canvas.width, game.canvas.height);
+  }
+
   if (!game.active) {
     ctx.fillStyle = "rgba(19, 37, 54, 0.38)";
     ctx.fillRect(0, 0, game.canvas.width, game.canvas.height);
@@ -2091,7 +2308,7 @@ function drawGame() {
     ctx.textAlign = "center";
     ctx.fillText(game.lastResult === "win" ? "闯关成功，等待下一局" : "点击开始游戏，准备守基地", 450, 230);
     ctx.font = '600 18px "Trebuchet MS", "PingFang SC", sans-serif';
-    ctx.fillText("绿色区域可放炮塔，路径上不能放。", 450, 265);
+    ctx.fillText("点炮位按钮建塔，锁定炮位需要道具解锁。", 450, 265);
   }
 }
 
@@ -2101,8 +2318,8 @@ function openGuide() {
     title: "三步开始 KET 守护小队",
     body: `
       <p>1. 先去背单词或做题，赚金币。</p>
-      <p>2. 攒够 15 金币后，去塔防游戏守住基地。</p>
-      <p>3. 闯关成功就能翻牌抽装备，所有学习记录都会自动保存在本机。</p>
+      <p>2. 去塔防页购买道具，再开始高难度守基地。</p>
+      <p>3. 点击固定炮位建塔或升级，闯关成功就能翻牌抽装备。</p>
     `,
     actions: [
       {
@@ -2148,12 +2365,231 @@ function showToast(message) {
   }, 2200);
 }
 
+function buildDefaultGameInventory() {
+  return GAME_ITEMS.reduce((inventory, item) => {
+    inventory[item.id] = 0;
+    return inventory;
+  }, {});
+}
+
+function normalizeGameInventory(rawInventory) {
+  const nextInventory = buildDefaultGameInventory();
+  if (!rawInventory || typeof rawInventory !== "object") {
+    return nextInventory;
+  }
+  GAME_ITEMS.forEach((item) => {
+    nextInventory[item.id] = Math.max(0, Math.floor(Number(rawInventory[item.id]) || 0));
+  });
+  return nextInventory;
+}
+
+function getItemInventoryCount(itemId) {
+  return state.gameInventory[itemId] || 0;
+}
+
+function getTotalItemCount() {
+  return GAME_ITEMS.reduce((count, item) => count + getItemInventoryCount(item.id), 0);
+}
+
+function canUseGameItem(itemId) {
+  if (getItemInventoryCount(itemId) < 1 || !game.active) {
+    return false;
+  }
+  if (itemId === "repair-kit" && game.baseHp >= game.maxBaseHp) {
+    return false;
+  }
+  if (itemId === "pad-permit" && getUnlockedPadCount() >= game.pads.length) {
+    return false;
+  }
+  return true;
+}
+
+function consumeInventoryItem(itemId) {
+  if (!state.gameInventory[itemId]) {
+    return false;
+  }
+  state.gameInventory[itemId] -= 1;
+  return true;
+}
+
+function applyGameItemEffect(itemId) {
+  switch (itemId) {
+    case "repair-kit":
+      game.baseHp = Math.min(game.maxBaseHp, game.baseHp + 2);
+      break;
+    case "frost-trap":
+      game.slowFieldTimer = Math.max(game.slowFieldTimer, 8);
+      break;
+    case "storm-battery":
+      game.fireBoostTimer = Math.max(game.fireBoostTimer, 12);
+      break;
+    case "pad-permit": {
+      const unlockedPad = unlockNextPad();
+      if (unlockedPad) {
+        game.log.unshift(`炮位 ${unlockedPad.label} 已解锁。`);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  game.uiDirty = true;
+}
+
+function createGamePads() {
+  return [
+    { label: "A", x: 120, y: 170, unlocked: true, tower: null },
+    { label: "B", x: 225, y: 340, unlocked: true, tower: null },
+    { label: "C", x: 375, y: 92, unlocked: true, tower: null },
+    { label: "D", x: 540, y: 98, unlocked: false, tower: null },
+    { label: "E", x: 615, y: 378, unlocked: false, tower: null },
+    { label: "F", x: 760, y: 118, unlocked: false, tower: null }
+  ];
+}
+
+function getUnlockedPadCount() {
+  return game.pads.filter((pad) => pad.unlocked).length;
+}
+
+function unlockNextPad() {
+  const targetPad = game.pads.find((pad) => !pad.unlocked);
+  if (!targetPad) {
+    return null;
+  }
+  targetPad.unlocked = true;
+  game.uiDirty = true;
+  return targetPad;
+}
+
+function getNearestGameSlot(x, y) {
+  let bestMatch = null;
+  game.pads.forEach((pad, index) => {
+    const gap = distance(x, y, pad.x, pad.y);
+    if (gap <= 38 && (!bestMatch || gap < bestMatch.gap)) {
+      bestMatch = { pad, index, gap };
+    }
+  });
+  return bestMatch;
+}
+
+function buildTowerOnPad(pad) {
+  pad.tower = {
+    x: pad.x,
+    y: pad.y,
+    level: 1,
+    cooldown: 0,
+    ...getTowerStats(1)
+  };
+  syncTowersFromPads();
+  game.log.unshift(`炮位 ${pad.label} 已建造 Lv1 炮塔。`);
+  renderGameView();
+}
+
+function upgradeTowerOnPad(pad) {
+  if (!pad.tower) {
+    return;
+  }
+  if (pad.tower.level >= 3) {
+    showToast(`炮位 ${pad.label} 已经满级。`);
+    return;
+  }
+  const nextLevel = pad.tower.level + 1;
+  Object.assign(pad.tower, {
+    level: nextLevel,
+    ...getTowerStats(nextLevel)
+  });
+  syncTowersFromPads();
+  game.log.unshift(`炮位 ${pad.label} 升级到 Lv${nextLevel}。`);
+  renderGameView();
+}
+
+function syncTowersFromPads() {
+  game.towers = game.pads.filter((pad) => pad.tower).map((pad) => pad.tower);
+  game.uiDirty = true;
+}
+
+function getTowerStats(level) {
+  if (level === 3) {
+    return { range: 176, damage: 20, baseFireRate: 0.62 };
+  }
+  if (level === 2) {
+    return { range: 162, damage: 14, baseFireRate: 0.8 };
+  }
+  return { range: 146, damage: 9, baseFireRate: 1.04 };
+}
+
+function getTowerFireRate(tower) {
+  const fireBoostMultiplier = game.fireBoostTimer > 0 ? 0.68 : 1;
+  return tower.baseFireRate * fireBoostMultiplier;
+}
+
+function getGameSlotBadge(pad) {
+  if (!pad.unlocked) {
+    return "锁定";
+  }
+  if (!pad.tower) {
+    return "空位";
+  }
+  return `Lv${pad.tower.level}`;
+}
+
+function getGameSlotDescription(pad) {
+  if (!pad.unlocked) {
+    return "需要增援炮位卡。现在高难度下，后排炮位很关键。";
+  }
+  if (!pad.tower) {
+    return "点击后立即建造炮塔。";
+  }
+  if (pad.tower.level >= 3) {
+    return "已经满级，持续自动攻击。";
+  }
+  return `当前等级 Lv${pad.tower.level}，点击可继续升级。`;
+}
+
+function getGameSlotActionLabel(pad) {
+  if (!pad.unlocked) {
+    return "需要解锁";
+  }
+  if (!pad.tower) {
+    return "点击建塔";
+  }
+  if (pad.tower.level >= 3) {
+    return "已满级";
+  }
+  return "点击升级";
+}
+
+function getGameEffectSummary() {
+  const effects = [];
+  if (game.slowFieldTimer > 0) {
+    effects.push(`减速剩余 ${Math.ceil(game.slowFieldTimer)} 秒`);
+  }
+  if (game.fireBoostTimer > 0) {
+    effects.push(`攻速提升 ${Math.ceil(game.fireBoostTimer)} 秒`);
+  }
+  return effects;
+}
+
+function getGameStatusNotice() {
+  if (!game.active && state.gold < GAME_ENTRY_COST) {
+    return "金币不够啦，先去背单词或答题赚金币吧。";
+  }
+  if (!game.active) {
+    return "这一版难度更高，建议至少带 1 张增援炮位卡或 1 个减速泡泡再开局。";
+  }
+  if (game.baseHp <= 1) {
+    return "基地只剩最后一层防线了，优先考虑使用应急扳手或减速泡泡。";
+  }
+  return "击败怪物会额外掉落 2 到 6 金币，通关还有额外奖励。";
+}
+
 function repairState() {
   state.learnedWords = dedupe(state.learnedWords).filter((id) => WORD_IDS.has(id));
   state.assessedWords = dedupe(state.assessedWords).filter((id) => state.learnedWords.includes(id));
   state.doneQuestions = dedupe(state.doneQuestions).filter((id) => QUESTION_IDS.has(id));
   state.wrongQuestions = dedupe(state.wrongQuestions).filter((id) => QUESTION_IDS.has(id));
   state.unlockedEquipment = dedupe(state.unlockedEquipment).filter((id) => EQUIPMENT_IDS.has(id));
+  state.gameInventory = normalizeGameInventory(state.gameInventory);
   saveState();
 }
 
@@ -2217,6 +2653,7 @@ function addGold(amount, reason) {
     state.lastGoldReason = reason;
   }
   saveState();
+  renderStats();
 }
 
 function pickNextStudyWordId() {
@@ -2675,6 +3112,7 @@ function loadState() {
     lastRewardName: "",
     lastStudyWordId: "",
     lastGoldReason: "",
+    gameInventory: buildDefaultGameInventory(),
     streakDays: 0,
     lastActiveDate: "",
     dataResetNotice: false
